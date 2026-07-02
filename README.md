@@ -51,8 +51,8 @@ docker compose down && docker compose up -d    # recreate the macvlan_lan networ
 
 ```bash
 cd ~/mt-centrallog-lite
-docker compose down
-cd .. && rm -rf mt-centrallog-lite    # ⚠️ removes sqlite_data/ too — backup first
+./uninstall.sh              # stops stack, prompts before deleting data
+./uninstall.sh --keep-data  # keeps sqlite_data/ backup_data/ capture_data/
 ```
 
 ## What's inside
