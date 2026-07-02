@@ -4,6 +4,12 @@ Self-hosted MikroTik central logging with rule-based threat detection, auto bloc
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
+## Screenshots
+
+![Dashboard](screenshot/Dashboard.png)
+![Network Map](screenshot/NetworkMap.png)
+![Login](screenshot/Login.png)
+
 ## Quick install
 
 ```bash
