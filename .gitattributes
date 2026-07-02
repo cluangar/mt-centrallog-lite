@@ -1,0 +1,3 @@
+# All files LF — the installer + shell scripts must have Unix line endings
+# even when checked out on Windows, or bash on the target host chokes on \r.
+* text=auto eol=lf

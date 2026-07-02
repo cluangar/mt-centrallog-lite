@@ -1,0 +1,117 @@
+name: mt-centrallog-lite
+
+# mt-centrallog LITE — pull variant (pre-built images from GHCR).
+#
+# This is the compose file the one-line installer downloads. It pulls images
+# from ghcr.io/cluangar/mt-centrallog-lite-* — no local build step. To pin a
+# specific version, set IMAGE_TAG in .env (default: latest).
+#
+# For the build-from-source variant see the lite/ folder in the main repo.
+
+services:
+
+  # ── Backend FastAPI ──────────────────────────────────────────────────────
+  backend:
+    image: ghcr.io/cluangar/mt-centrallog-lite-backend:${IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      TZ: ${TZ:-UTC}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    depends_on:
+      - docker-socket-proxy
+    volumes:
+      - ./sqlite_data:/data
+      - ./backup_data:/data/backups
+      - ./capture_data:/data/captures
+    networks:
+      - internal
+      - macvlan_lan
+    extra_hosts:
+      - "host-gateway:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  # ── Docker socket proxy (security hardening) ─────────────────────────────
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    restart: unless-stopped
+    # No `read_only: true` — the entrypoint writes haproxy.cfg to
+    # /usr/local/etc/haproxy which a read-only rootfs blocks (crash loop).
+
+  # ── Poller (MikroTik log collector) ─────────────────────────────────────
+  poller:
+    image: ghcr.io/cluangar/mt-centrallog-lite-poller:${IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      TZ: ${TZ:-UTC}
+    # Root to match the backend container — both write the same SQLite file.
+    user: "0:0"
+    volumes:
+      - ./sqlite_data:/data
+    networks:
+      - internal
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Frontend (React SPA served by nginx) ─────────────────────────────────
+  frontend:
+    image: ghcr.io/cluangar/mt-centrallog-lite-frontend:${IMAGE_TAG:-latest}
+    networks:
+      - internal
+    restart: unless-stopped
+
+  # ── Nginx reverse proxy ─────────────────────────────────────────────────
+  # nginx.conf is baked into the image (no bind mount needed).
+  nginx:
+    image: ghcr.io/cluangar/mt-centrallog-lite-nginx:${IMAGE_TAG:-latest}
+    ports:
+      - "${WEB_HTTP_PORT:-80}:80"
+      - "${WEB_HTTPS_PORT:-443}:443"
+    environment:
+      - SSL_ENABLED=${SSL_ENABLED:-true}
+    networks:
+      - internal
+      - public
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+  # ── MNDP relay (host networking for UDP broadcast) ──────────────────────
+  mndp-relay:
+    image: ghcr.io/cluangar/mt-centrallog-lite-mndp-relay:${IMAGE_TAG:-latest}
+    network_mode: host
+    env_file: .env
+    environment:
+      MNDP_PARENT_IFACE: ${MNDP_PARENT_IFACE:-eth0}
+    restart: unless-stopped
+
+
+networks:
+  internal:
+  public:
+  macvlan_lan:
+    driver: ipvlan
+    driver_opts:
+      parent: ${MNDP_PARENT_IFACE:-eth0}
+      ipvlan_mode: l2
+    ipam:
+      config:
+        - subnet:   ${MNDP_SUBNET}
+          gateway:  ${MNDP_GATEWAY}
+          ip_range: ${MNDP_IP_RANGE}
