@@ -1,6 +1,6 @@
 # mt-centrallog Lite
 
-Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, MNDP network map, device backup/restore, and Telegram + email alerting. Docker Compose, SQLite, single-node.
+Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, MNDP network map, Network Topology Mapper, device backup/restore, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
