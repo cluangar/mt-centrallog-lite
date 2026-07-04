@@ -63,11 +63,11 @@ fi
 # ── Auto-detect network ───────────────────────────────────────────────────
 say "Auto-detecting LAN settings…"
 
-DETECT_IFACE=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
-DETECT_GATEWAY=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')
+DETECT_IFACE=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}') || true
+DETECT_GATEWAY=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}') || true
 DETECT_CIDR=""
 if [ -n "$DETECT_IFACE" ]; then
-  DETECT_CIDR=$(ip -4 addr show "$DETECT_IFACE" 2>/dev/null | awk '/inet /{print $2; exit}')
+  DETECT_CIDR=$(ip -4 addr show "$DETECT_IFACE" 2>/dev/null | awk '/inet /{print $2; exit}') || true
 fi
 
 network_from_cidr() {
