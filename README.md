@@ -8,6 +8,7 @@ Self-hosted MikroTik central logging with rule-based threat detection, auto bloc
 
 ![Dashboard](screenshot/Dashboard.png)
 ![Network Map](screenshot/NetworkMap.png)
+![PtMP / mesh wireless topology](screenshot/PtMP_Mesh.png)
 ![Login](screenshot/Login.png)
 
 ## Quick install
@@ -42,6 +43,8 @@ cd ~/mt-centrallog-lite
 ```
 
 Your `sqlite_data/`, `backup_data/`, `capture_data/`, and `.env` are never touched by an update — only images swap.
+
+Any database schema change a release needs is applied automatically the first time the new backend image starts — there's no separate migration step to run.
 
 ## Change LAN settings
 
