@@ -64,5 +64,18 @@ docker compose pull
 say "Recreating containers…"
 docker compose up -d
 
+# ── Ensure the DB watchdog is present + scheduled (added 2026-08) ──────────
+# Fetch the scripts if missing (existing installs) or on --refresh, then
+# (re)install the cron entry. Toggle at runtime via DB_WATCHDOG_* in .env.
+for f in db_watchdog.sh recover_db.sh watchdog-cron.sh; do
+  if $REFRESH || [ ! -f "$f" ]; then
+    curl -fsSL "${BASE_URL}/${f}" -o "${f}.new" && mv "${f}.new" "$f" || warn "could not fetch $f"
+  fi
+done
+chmod +x db_watchdog.sh recover_db.sh watchdog-cron.sh 2>/dev/null || true
+if [ -x ./watchdog-cron.sh ]; then
+  ./watchdog-cron.sh install "$(pwd)" >/dev/null 2>&1 && ok "DB watchdog scheduled (*/10)"
+fi
+
 ok "Update complete."
 docker compose ps

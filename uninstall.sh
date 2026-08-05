@@ -42,6 +42,12 @@ read -r -p "Continue? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
 echo ""
 
+# --- Remove the DB watchdog cron (before deleting the scripts) ---
+if [ -x "${INSTALL_DIR}/watchdog-cron.sh" ]; then
+  say "Removing DB watchdog cron"
+  "${INSTALL_DIR}/watchdog-cron.sh" remove "$INSTALL_DIR" 2>/dev/null || true
+fi
+
 # --- Stop the stack ---
 say "Stopping stack"
 cd "$INSTALL_DIR"
@@ -55,7 +61,11 @@ if $KEEP_DATA; then
   rm -f  "${INSTALL_DIR}/docker-compose.yml" \
          "${INSTALL_DIR}/update.sh" \
          "${INSTALL_DIR}/update-mndp.sh" \
+         "${INSTALL_DIR}/db_watchdog.sh" \
+         "${INSTALL_DIR}/recover_db.sh" \
+         "${INSTALL_DIR}/watchdog-cron.sh" \
          "${INSTALL_DIR}/uninstall.sh"
+  rm -rf "${INSTALL_DIR}/.watchdog"
   ok "App files removed. Data kept at ${INSTALL_DIR}/"
 else
   say "Removing ${INSTALL_DIR}"

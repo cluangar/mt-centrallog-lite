@@ -63,8 +63,31 @@ fi
 # ── Auto-detect network ───────────────────────────────────────────────────
 say "Auto-detecting LAN settings…"
 
-DETECT_IFACE=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}') || true
-DETECT_GATEWAY=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}') || true
+DETECT_IFACE=$(ip route show default 2>/dev/null | awk '/default/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}') || true
+DETECT_GATEWAY=$(ip route show default 2>/dev/null | awk '/default/{for(i=1;i<=NF;i++) if($i=="via"){print $(i+1); exit}}') || true
+
+# Default route may point at a VPN/tunnel (ppp0, tun0, wg0…) instead of the
+# real LAN NIC — those aren't broadcast-domain interfaces and can't be an
+# ipvlan/macvlan parent. Fall back to scanning for a real LAN NIC instead.
+if echo "$DETECT_IFACE" | grep -qE '^(ppp|tun|tap|wg)'; then
+  DETECT_IFACE=""
+  DETECT_GATEWAY=""
+  while read -r cand_iface cand_cidr; do
+    case "$cand_iface" in
+      lo|ppp*|tun*|tap*|wg*|docker*|veth*|br-*|virbr*) continue ;;
+    esac
+    case "$cand_cidr" in
+      10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|192.168.*)
+        DETECT_IFACE="$cand_iface"
+        break
+        ;;
+    esac
+  done < <(ip -4 -o addr show 2>/dev/null | awk '{print $2, $4}')
+  if [ -n "$DETECT_IFACE" ]; then
+    DETECT_GATEWAY=$(ip route show dev "$DETECT_IFACE" 2>/dev/null | awk '/via/{for(i=1;i<=NF;i++) if($i=="via"){print $(i+1); exit}}') || true
+  fi
+fi
+
 DETECT_CIDR=""
 if [ -n "$DETECT_IFACE" ]; then
   DETECT_CIDR=$(ip -4 addr show "$DETECT_IFACE" 2>/dev/null | awk '/inet /{print $2; exit}') || true
@@ -116,7 +139,10 @@ fetch docker-compose.yml
 fetch .env.example
 fetch update.sh
 fetch update-mndp.sh
-chmod +x update.sh update-mndp.sh
+fetch db_watchdog.sh
+fetch recover_db.sh
+fetch watchdog-cron.sh
+chmod +x update.sh update-mndp.sh db_watchdog.sh recover_db.sh watchdog-cron.sh
 
 # Data dirs
 mkdir -p sqlite_data backup_data capture_data
@@ -169,6 +195,13 @@ docker compose pull
 
 say "Starting Lite stack…"
 docker compose up -d
+
+# ── Install the DB watchdog cron (auto-detect + auto-recover DB corruption) ─
+if [ -x "$INSTALL_DIR/watchdog-cron.sh" ]; then
+  "$INSTALL_DIR/watchdog-cron.sh" install "$INSTALL_DIR" \
+    && ok "DB watchdog scheduled (every 10 min). Toggle via DB_WATCHDOG_ENABLED / DB_WATCHDOG_AUTORECOVER in .env." \
+    || warn "Could not install the watchdog cron (no crontab?). The stack still runs; recovery is manual."
+fi
 
 # ── Post-install summary ──────────────────────────────────────────────────
 echo ""
