@@ -8,7 +8,10 @@ Self-hosted MikroTik central logging with rule-based threat detection, auto bloc
 
 ![Dashboard](screenshot/Dashboard.png)
 ![Network Map](screenshot/NetworkMap.png)
+![Network Map — device card, live load and link legend](screenshot/NetworkMap2.png)
 ![PtMP / mesh wireless topology](screenshot/PtMP_Mesh.png)
+![Devices — MNDP broadcast / subnet scan discovery](screenshot/Add_devices.png)
+![Per-device stats — health, CPU, memory, temperature](screenshot/Statistic.png)
 ![Login](screenshot/Login.png)
 
 ## Quick install
@@ -91,6 +94,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - English + Thai UI
 - DHCP / DNS name-lookup (partial UDT — resolves hostname → IP / MAC)
 - Full security-hardening pass (SECRET_KEY startup gate, login rate limit, security headers, upload caps, SSH host-key learn-and-verify, docker-socket-proxy sidecar)
+- Automatic database protection — scheduled rolling + timestamped backups taken live without disturbing the running database, integrity-verified so damage is never copied into a backup, plus startup auto-heal that promotes the newest good backup if the database is unusable
 
 **Not in Lite (available in the Full edition):**
 - AI pattern detection, adaptive rules, predictive blocking
