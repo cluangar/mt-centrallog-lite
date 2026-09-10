@@ -104,6 +104,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - Telegram + email alerting
 - English + Thai UI
 - DHCP / DNS name-lookup (partial UDT — resolves hostname → IP / MAC)
+- Network History — traffic replay over time windows with video export (WebM/MP4/AVI)
 - Full security-hardening pass (SECRET_KEY startup gate, login rate limit, security headers, upload caps, SSH host-key learn-and-verify, docker-socket-proxy sidecar)
 - Automatic database protection — scheduled rolling + timestamped backups taken live without disturbing the running database, integrity-verified so damage is never copied into a backup, plus startup auto-heal that promotes the newest good backup if the database is unusable
 
