@@ -16,6 +16,7 @@ https://www.youtube.com/watch?v=5XYOWSiuobE
 ![Network Map — timeline, link-count history with A/B compare](screenshot/NetworkMap_Timeline.png)
 ![Network Map — RTT deep probe](screenshot/RttProbe.png)
 ![Network Map — toolbar menu](screenshot/NetworkMap_Menu.png)
+![Network History — traffic replay & video export](screenshot/NetworkHistory.png)
 ![PtMP / mesh wireless topology](screenshot/PtMP_Mesh.png)
 ![Devices — MNDP broadcast / subnet scan discovery](screenshot/Add_devices.png)
 ![Per-device stats — health, CPU, memory, temperature](screenshot/Statistic.png)
@@ -104,6 +105,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - Telegram + email alerting
 - English + Thai UI
 - DHCP / DNS name-lookup (partial UDT — resolves hostname → IP / MAC)
+- Network History — traffic replay over time windows with video export (WebM/MP4/AVI)
 - Full security-hardening pass (SECRET_KEY startup gate, login rate limit, security headers, upload caps, SSH host-key learn-and-verify, docker-socket-proxy sidecar)
 - Automatic database protection — scheduled rolling + timestamped backups taken live without disturbing the running database, integrity-verified so damage is never copied into a backup, plus startup auto-heal that promotes the newest good backup if the database is unusable
 
