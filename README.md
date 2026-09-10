@@ -16,7 +16,7 @@ https://www.youtube.com/watch?v=5XYOWSiuobE
 ![Network Map — timeline, link-count history with A/B compare](screenshot/NetworkMap_Timeline.png)
 ![Network Map — RTT deep probe](screenshot/RttProbe.png)
 ![Network Map — toolbar menu](screenshot/NetworkMap_Menu.png)
-![Network History — traffic replay & video export](screenshot/NetworkHistory.png)
+![Network History — traffic replay & video export](screenshot/NetworkHistory_v2.png)
 ![PtMP / mesh wireless topology](screenshot/PtMP_Mesh.png)
 ![Devices — MNDP broadcast / subnet scan discovery](screenshot/Add_devices.png)
 ![Per-device stats — health, CPU, memory, temperature](screenshot/Statistic.png)
