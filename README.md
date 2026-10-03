@@ -1,6 +1,6 @@
 # mt-centrallog Lite
 
-Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, MNDP network map, Network Topology Mapper, device backup/restore, and Telegram + email alerting. Docker Compose, SQLite, single-node.
+Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, MNDP network map, Network Topology Mapper, one-click device WebFig console, device backup/restore, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
@@ -45,7 +45,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 
 - Linux host (amd64). Tested on Debian 12, Ubuntu 22.04 / 24.04.
 - Docker Engine 24+ with Compose plugin (`docker compose version` must work).
-- Free TCP ports 80 + 443 (override via `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` in `.env`).
+- Free TCP ports 80 + 443 (override via `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` in `.env`), plus 8071–8080 for the one-click device WebFig console (fixed, up to 10 concurrent windows).
 - A LAN interface reachable by your MikroTik devices (needed for MNDP broadcast discovery).
 
 ## Update
@@ -116,6 +116,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - `.rsc` reset-first restore with rescue bootstrap + assisted recovery
 - RouterOS firmware upgrade/downgrade jobs
 - Bulk CLI runner
+- Wireless analysis page (fleet-wide load + weak-signal view)
 - MariaDB backend, MCP server, AR Port Map API
 - AbuseIPDB / Tor/Proxy reputation enrichment
 
