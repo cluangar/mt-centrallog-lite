@@ -21,7 +21,9 @@ https://www.youtube.com/watch?v=5XYOWSiuobE
 ![Network History — traffic replay & video export](screenshot/NetworkHistory_v2.png)
 ![PtMP / mesh wireless topology](screenshot/PtMP_Mesh.png)
 ![Devices — MNDP broadcast / subnet scan discovery](screenshot/Add_devices.png)
-![Per-device stats — health, CPU, memory, temperature, wireless clients by band](screenshot/Statistic.png)
+![Devices — every managed device and its per-row actions, including the one-click WebFig console](screenshot/Devices.png)
+![Audit Logs — device-console (WebFig) sessions, each attributed to an operator and audited](screenshot/AuditLogs.png)
+![Per-device stats — health, CPU, memory, temperature](screenshot/Statistic.png)
 ![DB Admin](screenshot/DbAdmin.png)
 ![DB Admin — data-hygiene suite](screenshot/DbAdmin_Hygiene.png)
 ![Reports — notification categories](screenshot/NotificationCategories.png)
@@ -113,7 +115,6 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - UDT **locate** — resolve an IP / MAC / hostname to the **switch and port** it is on, ranked best-first; hostname resolution runs through DHCP leases, static/cached DNS, and a live router probe
 - Live per-link traffic load colouring, stale-link badging, per-port chips on the device card
 - Link-count timeline with A/B compare, and **Network History**: traffic replay over a time window with video export (WebM / MP4 / AVI)
-- One-click **WebFig console** into any managed device (auto-logged-in, up to 10 concurrent windows, ports 8071–8080) — every session is audited
 - Per-device map tools: **Force update** (re-poll one device on demand and report the uplink it found) and **RTT deep probe** (ICMP path-quality classification to the neighbours heard on its ports)
 - What-if view: `?mute=9,12` redraws the map as if those devices were gone, without touching them
 - Device discovery by MNDP broadcast or by TCP subnet scan, with SNMP enrichment
@@ -129,6 +130,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - `.rsc` save + restore in **both** modes: fast `/import`, and **reset-first** restore with a rescue bootstrap so the device always comes back reachable on its current management IP — plus assisted recovery hints (locate-by-MAC via neighbours) when it does not
 - Multi-IP / multi-VLAN device records, self-IP and managed-device protection so the app never blocks itself, firewall-rule resync between DB and device
 - Full hardware-health panel (temperature / voltage / current / fans across CCR / CRS / RB), interface + uptime + CPU/memory history
+- One-click **WebFig console** from a device row (the **Web** button, plus the open icon in the Console modal) — a ticket-gated auto-logged-in session, up to 10 concurrent windows on ports 8071–8080, with every open / login / close written to the audit log
 
 *Alerting*
 - Telegram: threat alerts, device offline/back-online, job completion, database health, and a periodic digest; quiet hours and alert-storm coalescing; optional inline Block / Whitelist / View buttons (off by default, acted on only from the chats alerts are sent to)
