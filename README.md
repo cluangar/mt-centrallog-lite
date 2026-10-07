@@ -2,7 +2,7 @@
 
 Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, an MNDP network map with switch-port locate, one-click device WebFig console, device backup/restore (binary and reset-first `.rsc`), per-AP wireless client monitoring, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
-**Current release: `1.5.558`** — `:latest` and `:1.5.558` are the same images on GHCR.
+**Current release: `1.5.561`** — `:latest` and `:1.5.561` are the same images on GHCR (pushed 2026-10-07: the Network Map load-failure diagnostics + the nginx `gzip_proxied any` compression fix; backend / poller / mndp-relay images are byte-identical to `1.5.558`).
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
@@ -58,7 +58,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 ```bash
 cd ~/mt-centrallog-lite
 ./update.sh              # pull :latest and recreate
-./update.sh 1.5.558      # pin to a specific version (writes IMAGE_TAG to .env)
+./update.sh 1.5.561      # pin to a specific version (writes IMAGE_TAG to .env)
 ./update.sh --refresh    # also re-download compose file + update-mndp.sh
 ```
 
