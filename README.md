@@ -2,7 +2,7 @@
 
 Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, an MNDP network map with switch-port locate, one-click device WebFig console, device backup/restore (binary and reset-first `.rsc`), per-AP wireless client monitoring, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
-**Current release: `1.5.567`** — `:latest` and `:1.5.567` are the same images on GHCR (pushed 2026-10-08: deleting a packet capture in the Sniffer now removes it from the list immediately and reports a failed delete instead of failing silently; the `capture_start` audit entry carries the capture's real id instead of `null`; and the device WebFig console no longer copies the router's own `Date`/`Server` headers onto its responses, which had been making the proxy log a duplicate-header warning for every console request). `nginx` is byte-identical to `1.5.564`; `poller` and `mndp-relay` carry unchanged source (rebuilt, so their digests differ from `1.5.564`). Previous: `1.5.564` (opening a router's web console is written to the Audit Log as `open` → `login` → `close`), `1.5.563` (Network History replay ships only the links it can draw — a 2-hour window 20 MB → 6.7 MB plain / 0.6 MB compressed — and nginx no longer writes map-layout saves to a disk temp file), `1.5.561` (Network Map load-failure diagnostics + `gzip_proxied any`).
+**Current release: `1.5.569`** — `:latest` and `1.5.569` are the same images on GHCR (pushed 2026-10-08: the device WebFig console no longer inherits the previous console's cookies — cookie names now carry the console session as well as the port, so a re-used port can no longer hand an old router's session cookie to a new device and land you on that router's login page; and the Database Admin **Vacuum** action now also runs `ANALYZE`, refreshing SQLite's query-planner statistics for the first time — the query that feeds the Network Map's live traffic colours measured **2.78 s → 0.37 s** on a copy of a production database). `backend` and `frontend` changed; `nginx` and `mndp-relay` are byte-identical to `1.5.567`; `poller` carries unchanged source (rebuilt on a different machine, so its digest differs). Previous: `1.5.567` (deleting a packet capture removes it from the list immediately and a failed delete is reported instead of swallowed; the `capture_start` audit entry carries the capture's real id; the console no longer copies the router's own `Date`/`Server` headers onto its responses), `1.5.564` (opening a router's web console is written to the Audit Log as `open` → `login` → `close`), `1.5.563` (Network History replay ships only the links it can draw — a 2-hour window 20 MB → 6.7 MB plain / 0.6 MB compressed — and nginx no longer writes map-layout saves to a disk temp file), `1.5.561` (Network Map load-failure diagnostics + `gzip_proxied any`).
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
@@ -58,7 +58,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 ```bash
 cd ~/mt-centrallog-lite
 ./update.sh              # pull :latest and recreate
-./update.sh 1.5.567      # pin to a specific version (writes IMAGE_TAG to .env)
+./update.sh 1.5.569      # pin to a specific version (writes IMAGE_TAG to .env)
 ./update.sh --refresh    # also re-download compose file + update-mndp.sh
 ```
 
@@ -145,7 +145,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 *Database protection*
 - Scheduled rolling backups every `DB_BACKUP_INTERVAL_HOURS` (default 4) plus the timestamped ones you take from DB Admin — written **without disturbing the running database** (SQLite online-backup API, read-only sources) and integrity-verified, so a corrupt page is never copied into a backup
 - **Opt-in** startup auto-heal — `DB_AUTOHEAL_ENABLED=true` (the shipped template sets `false`; turn it on especially on SD / eMMC / USB storage) — which promotes the newest clean, non-empty backup when the database is unusable
-- DB Admin page: backup/restore (restore is staged, applied safely at next start), purge, vacuum, disk-usage breakdown, and a data-hygiene suite that reconciles DB rows with the files actually on disk (import orphan device backups, drop rows whose file is gone, delete files with no row)
+- DB Admin page: backup/restore (restore is staged, applied safely at next start), purge, vacuum (which also runs `ANALYZE` to refresh SQLite's query-planner statistics), disk-usage breakdown, and a data-hygiene suite that reconciles DB rows with the files actually on disk (import orphan device backups, drop rows whose file is gone, delete files with no row)
 - Host **DB watchdog** (`db_watchdog.sh`, cron every 10 min) — see below
 
 **Not in Lite (available in the Full edition):**
