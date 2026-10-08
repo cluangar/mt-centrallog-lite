@@ -149,7 +149,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - Host **DB watchdog** (`db_watchdog.sh`, cron every 10 min) — see below
 
 **Not in Lite (available in the Full edition):**
-- AI pattern detection, adaptive rule proposals, predictive pre-blocking — Lite's Rules page shows an empty AI Proposals card, because the endpoints behind it are Full-only
+- AI pattern detection, adaptive rule proposals, predictive pre-blocking — the Lite UI hides those sections. A couple of background status polls still probe the Full-only endpoints and get a 404 in return; it is server log noise only, with no effect on any Lite feature and no data impact.
 - SNMP network-topology mapping (FDB / LLDP / Q-Bridge / CapsMan), SNMP device discovery and the SNMP settings page
 - Continuous subnet host scanning (`scanned_hosts`) — Lite's locate resolves from DHCP/DNS and live router probes
 - RouterOS firmware upgrade/downgrade jobs (including optional-package staging)
