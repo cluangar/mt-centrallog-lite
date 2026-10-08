@@ -2,7 +2,7 @@
 
 Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, an MNDP network map with switch-port locate, one-click device WebFig console, device backup/restore (binary and reset-first `.rsc`), per-AP wireless client monitoring, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
-**Current release: `1.5.563`** — `:latest` and `:1.5.563` are the same images on GHCR (pushed 2026-10-08: the Network History replay now ships only the links it can draw — a 2-hour window went from 20 MB to 6.7 MB plain / 0.6 MB compressed on the larger edition's site — and nginx no longer writes map-layout saves to a disk temp file; poller and mndp-relay images are byte-identical to `1.5.561`). Previous: `1.5.561` (Network Map load-failure diagnostics + `gzip_proxied any`), `1.5.558`.
+**Current release: `1.5.564`** — `:latest` and `:1.5.564` are the same images on GHCR (pushed 2026-10-08: opening a router's web console is now written to the Audit Log as `open` → `login` → `close` — the `open` entry had been silently discarded on every console since the feature shipped, so the trail only ever showed logins; poller, nginx and mndp-relay images are byte-identical to `1.5.563`). Previous: `1.5.563` (Network History replay ships only the links it can draw — a 2-hour window 20 MB → 6.7 MB plain / 0.6 MB compressed — and nginx no longer writes map-layout saves to a disk temp file), `1.5.561` (Network Map load-failure diagnostics + `gzip_proxied any`).
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
@@ -58,7 +58,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 ```bash
 cd ~/mt-centrallog-lite
 ./update.sh              # pull :latest and recreate
-./update.sh 1.5.563      # pin to a specific version (writes IMAGE_TAG to .env)
+./update.sh 1.5.564      # pin to a specific version (writes IMAGE_TAG to .env)
 ./update.sh --refresh    # also re-download compose file + update-mndp.sh
 ```
 
