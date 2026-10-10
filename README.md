@@ -2,7 +2,7 @@
 
 Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, an MNDP network map with switch-port locate, one-click device WebFig console, device backup/restore (binary and reset-first `.rsc`), per-AP wireless client monitoring, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
-**Current release: `1.5.569`** — `:latest` and `1.5.569` are the same images on GHCR (pushed 2026-10-08: the device WebFig console no longer inherits the previous console's cookies — cookie names now carry the console session as well as the port, so a re-used port can no longer hand an old router's session cookie to a new device and land you on that router's login page; and the Database Admin **Vacuum** action now also runs `ANALYZE`, refreshing SQLite's query-planner statistics for the first time — the query that feeds the Network Map's live traffic colours measured **2.78 s → 0.37 s** on a copy of a production database). `backend` and `frontend` changed; `nginx` and `mndp-relay` are byte-identical to `1.5.567`; `poller` carries unchanged source (rebuilt on a different machine, so its digest differs). Previous: `1.5.567` (deleting a packet capture removes it from the list immediately and a failed delete is reported instead of swallowed; the `capture_start` audit entry carries the capture's real id; the console no longer copies the router's own `Date`/`Server` headers onto its responses), `1.5.564` (opening a router's web console is written to the Audit Log as `open` → `login` → `close`), `1.5.563` (Network History replay ships only the links it can draw — a 2-hour window 20 MB → 6.7 MB plain / 0.6 MB compressed — and nginx no longer writes map-layout saves to a disk temp file), `1.5.561` (Network Map load-failure diagnostics + `gzip_proxied any`).
+**Current release: `1.5.570`** — `:latest` and `1.5.570` are the same images on GHCR (pushed 2026-10-10: the Network Map can no longer overwrite your saved layout with an empty one. If the map page failed to load its stored layout from the server — while the server was restarting or busy — it kept working with an EMPTY local layout, and the next filter change, pan or Reset saved that emptiness back over your device positions, named views and manual links, while the Audit log recorded every lost item as deleted by you. Now a page that failed the load never saves at all until a load succeeds, and the server refuses a save that would erase your stored manual links. `backend` and `frontend` changed; `poller`, `nginx` and `mndp-relay` are byte-identical to `1.5.569`). Previous: `1.5.569` (the device WebFig console no longer inherits the previous console's cookies — cookie names now carry the console session as well as the port, so a re-used port can no longer hand an old router's session cookie to a new device and land you on that router's login page; and the Database Admin **Vacuum** action now also runs `ANALYZE`, refreshing SQLite's query-planner statistics for the first time — the query that feeds the Network Map's live traffic colours measured **2.78 s → 0.37 s** on a copy of a production database), `1.5.567` (deleting a packet capture removes it from the list immediately and a failed delete is reported instead of swallowed; the `capture_start` audit entry carries the capture's real id; the console no longer copies the router's own `Date`/`Server` headers onto its responses), `1.5.564` (opening a router's web console is written to the Audit Log as `open` → `login` → `close`), `1.5.563` (Network History replay ships only the links it can draw — a 2-hour window 20 MB → 6.7 MB plain / 0.6 MB compressed — and nginx no longer writes map-layout saves to a disk temp file), `1.5.561` (Network Map load-failure diagnostics + `gzip_proxied any`).
 
 > **Repo status:** this repository ships the **installer + pre-built Docker images only**. The source lives in the private full repo. Everything here is what `install.sh` needs and what `docker compose pull` fetches.
 
@@ -58,7 +58,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 ```bash
 cd ~/mt-centrallog-lite
 ./update.sh              # pull :latest and recreate
-./update.sh 1.5.569      # pin to a specific version (writes IMAGE_TAG to .env)
+./update.sh 1.5.570      # pin to a specific version (writes IMAGE_TAG to .env)
 ./update.sh --refresh    # also re-download compose file + update-mndp.sh
 ```
 
@@ -111,7 +111,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - Logs / Threats / Rules / Whitelist / Trace / Audit pages, system-log viewer, service-status page, API keys for machine access
 
 *Network map & discovery*
-- MNDP network map: saved device positions, named views, undo/redo for moves, links, resets and views, Ctrl+K command palette
+- MNDP network map: saved device positions, named views, undo/redo for moves, links, resets and views, Ctrl+K command palette — and a page that failed to load its saved layout never saves an empty one over it
 - UDT **locate** — resolve an IP / MAC / hostname to the **switch and port** it is on, ranked best-first; hostname resolution runs through DHCP leases, static/cached DNS, and a live router probe
 - Live per-link traffic load colouring, stale-link badging, per-port chips on the device card
 - Link-count timeline with A/B compare, and **Network History**: traffic replay over a time window with video export (WebM / MP4 / AVI)
@@ -190,6 +190,8 @@ Everything lives in `.env` and `docker compose up -d` re-reads it. A few are wor
 | `WIRELESS_OVERLOAD_CLIENT_COUNT` | `30` | how many associated clients turn an AP's map chip amber |
 | `WIRELESS_FRESHNESS_MINUTES` | `60` | how old a client sample may be before it is dropped from the counts — must outlive one full poll pass of your fleet |
 | `WIRELESS_STATS_SAMPLE_INTERVAL_MINUTES` | `15` | cadence of the per-AP client-count history behind the device chart |
+| `TOPOLOGY_POLL_INTERVAL_SECONDS` | `900` | how often the poller re-reads neighbours / FDB / spanning-tree — the evidence the map is built from |
+| `WIRELESS_REG_EDGES` / `WIRELESS_FLOOD_DEMOTE` | `true` / `true` | turn the controller-less wireless links (and their flood demotion) off when a map link looks wrong |
 | `TOPOLOGY_SNAPSHOT_INTERVAL_S` / `TOPOLOGY_SNAPSHOT_RETENTION_DAYS` | `900` / `3` (code defaults `15` / `90`) | link-count timeline capture tick + retention |
 | `TELEGRAM_*` | see `.env` | which alert types are sent, digest interval, quiet hours, inline buttons |
 | `DB_WATCHDOG_*` / `DB_AUTOHEAL_ENABLED` | see `.env` | the host watchdog and startup auto-heal |
