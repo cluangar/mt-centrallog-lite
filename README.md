@@ -62,7 +62,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 cd ~/mt-centrallog-lite
 ./update.sh              # pull :latest and recreate
 ./update.sh 1.5.583      # pin to a specific version (writes IMAGE_TAG to .env)
-./update.sh --refresh    # also re-download compose file + update-mndp.sh
+./update.sh --refresh    # also re-download the compose file, update-mndp.sh, and the three watchdog scripts
 ```
 
 Your `sqlite_data/`, `backup_data/`, `capture_data/`, and `.env` are never touched by an update — only images swap.
@@ -170,6 +170,8 @@ Lite and Full share the same DB schema and the same `.env` format — Lite → F
 
 `install.sh` and `update.sh` place three scripts next to your stack and add one crontab entry (`*/10`):
 
+⚠ A plain `./update.sh` re-downloads those scripts **only when they are missing**. An install that already has them picks up a watchdog change by running `./update.sh --refresh` — the crontab entry is re-installed in the same step.
+
 | Script | Role |
 |---|---|
 | `db_watchdog.sh` | the single command: `install` · `remove` · `status` · (no argument) run one check |
@@ -211,7 +213,7 @@ Everything lives in `.env` and `docker compose up -d` re-reads it. A few are wor
 | `DIAGNOSTICS_INTEGRITY_MAX_MB` / `DIAGNOSTICS_BUNDLE_MAX_MB` / `DIAGNOSTICS_LOG_TAIL` | `500` / `25` / `500` | caps on the read-only diagnostics endpoints: integrity scanning, bundle size, per-container log tail |
 | `DB_AUTOHEAL_ENABLED` | `false` in the template (the code default is `true`) | startup auto-heal |
 
-⚠ Changing a value needs `docker compose up -d` (a **recreate**), not `docker compose restart` — a restart does not re-read `.env`.
+⚠ Changing an app value needs `docker compose up -d` (a **recreate**), not `docker compose restart` — a restart does not re-read `.env`. The one exception is the `DB_WATCHDOG_*` keys: `db_watchdog.sh` reads them from `<run-dir>/.env` on every cron run, so a saved value takes effect on the next run with no recreate — and `export DB_WATCHDOG_…` before a manual run does nothing, because the file wins.
 
 ## License
 
