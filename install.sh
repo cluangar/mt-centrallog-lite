@@ -187,6 +187,17 @@ sed_set BACKEND_API_KEY  "$BACKEND_API_KEY"
 [ -n "$DETECT_RANGE" ]  && sed_set MNDP_IP_RANGE     "$DETECT_RANGE"
 [ -n "$DETECT_CIDR" ]   && sed_set BACKEND_FETCH_URL "http://${DETECT_CIDR%/*}:80"
 
+# The HTTPS certificate must name the address you actually type — iOS and Android
+# refuse a subjectAltName mismatch with NO bypass. Default TLS_SAN to this box's
+# own LAN IPv4 (taken from the detected LAN interface; falls back to the default
+# route's source). If the box later moves, edit TLS_SAN in .env and recreate nginx.
+DETECT_HOSTIP=""
+if [ -n "$DETECT_IFACE" ]; then
+  DETECT_HOSTIP=$(ip -4 addr show "$DETECT_IFACE" 2>/dev/null | awk '/inet /{split($2,a,"/"); print a[1]; exit}')
+fi
+[ -z "$DETECT_HOSTIP" ] && DETECT_HOSTIP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+[ -n "$DETECT_HOSTIP" ] && sed_set TLS_SAN "IP:${DETECT_HOSTIP},DNS:localhost"
+
 ok ".env written to $INSTALL_DIR/.env"
 
 # ── Pull + start ──────────────────────────────────────────────────────────

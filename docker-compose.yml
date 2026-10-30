@@ -107,6 +107,13 @@ services:
       - "8071-8080:8071-8080"   # Device WebFig slot pool (nginx pool server; keep in sync with SLOT_POOL in device_web.py)
     environment:
       - SSL_ENABLED=${SSL_ENABLED:-true}
+      - TLS_SAN=${TLS_SAN:-IP:127.0.0.1,DNS:localhost}
+      - TLS_CA_DAYS=${TLS_CA_DAYS:-3650}
+      - TLS_LEAF_DAYS=${TLS_LEAF_DAYS:-800}
+    volumes:
+      # Persistent site CA + leaf (BACKLOG #69). Created by the entrypoint on
+      # first start; never regenerated unless TLS_SAN changes or the leaf expires.
+      - ./ssl_certs:/etc/nginx/ssl
     networks:
       - internal
       - public
