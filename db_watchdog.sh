@@ -123,7 +123,8 @@ cid()  { ( cd "$RUN" && docker compose ps -q "$1" 2>/dev/null ) | head -1; }
 # columns (17, tab-separated): ts  project  run_dir  backend_container  db_bytes
 #   probe_res  file_status  app_errs  action  snapshot  snapshot_bytes
 #   snaps_count  snaps_bytes  zero_count  recover_fails  escalated  dur_s
-# action: healthy | not_confirmed | confirmed | confirmed_no_autorecover |
+# action: healthy | app_contention | app_down | app_restarted | app_restart_failed |
+#   app_down_cooldown | not_confirmed | confirmed | confirmed_no_autorecover |
 #   confirmed_escalated_breaker | confirmed_cooldown | recovered | recover_failed |
 #   escalated | skip_locked | skip_stack | skip_ramdisk | disabled |
 #   error_no_compose | error_no_sqlite3 | interrupted | aborted
@@ -270,6 +271,13 @@ AUTORECOVER=$(env_get DB_WATCHDOG_AUTORECOVER); AUTORECOVER=${AUTORECOVER:-true}
 _num() { case "$1" in ''|*[!0-9]*) echo "$2";; *) echo "$1";; esac; }
 APP_ERR_MIN=$(env_get DB_WATCHDOG_ERR_WINDOW_MIN);      APP_ERR_MIN=$(_num "$APP_ERR_MIN" 12)
 APP_ERR_THRESHOLD=$(env_get DB_WATCHDOG_ERR_THRESHOLD); APP_ERR_THRESHOLD=$(_num "$APP_ERR_THRESHOLD" 3)
+# App-level contention alarm (#76). The file can read perfectly clean while the backend is losing the
+# SQLite write lock on every request — the shape an operator sees as "the database is dead" while every
+# corruption signal says healthy. Detection ONLY: stopping the writers does not release a lock, so this
+# NEVER triggers recovery. 0 = never alert; while the streak continues, at most one alert per repeat
+# window (the same storm rule C4 learned on the probe alert).
+LOCK_ALERT=$(env_get DB_WATCHDOG_LOCK_ALERT); LOCK_ALERT=$(_num "$LOCK_ALERT" 5)
+LOCK_ALERT_REPEAT=$(_num "$(env_get DB_WATCHDOG_LOCK_ALERT_REPEAT_SEC)" 3600)
 RECOVER_COOLDOWN=$(env_get DB_WATCHDOG_COOLDOWN_SEC);   RECOVER_COOLDOWN=$(_num "$RECOVER_COOLDOWN" 900)
 MAX_FAILS=$(env_get DB_WATCHDOG_MAX_FAILS);             MAX_FAILS=$(_num "$MAX_FAILS" 3)
 LOG_LINES=$(env_get DB_WATCHDOG_LOG_LINES);             LOG_LINES=$(_num "$LOG_LINES" 1000)
@@ -283,6 +291,21 @@ SNAP_MIN_BYTES=$(env_get DB_WATCHDOG_SNAPSHOT_MIN_BYTES); SNAP_MIN_BYTES=$(_num 
 # 1: a watchdog with no snapshot is not a safety net.
 SNAP_KEEP=$(env_get DB_WATCHDOG_SNAP_KEEP); SNAP_KEEP=$(_num "$SNAP_KEEP" 24)
 if [ "$SNAP_KEEP" -lt 1 ] 2>/dev/null; then SNAP_KEEP=1; fi
+# ── app liveness: the case where every FILE check says healthy and the app is dead ──
+# Docker already probes the backend's own /api/v1/health every 10 s and marks the container `unhealthy`
+# when it stops answering; a `compose down` followed by an interrupted `up` can also leave a service in
+# `created` (measured on KBR 2026-11-01, the outage where the SPA served and every /api 502'd). Neither
+# is a corruption signal, so until now NOTHING in this file reacted to either. Detection is always on;
+# the restart is opt-in (`DB_WATCHDOG_APP_RESTART=true`) after APP_RESTART_RUNS consecutive flagged runs.
+# The health wait is separate from the corruption path's 90 s: on a ramdisk box a backend boot is
+# minutes (measured 377 s on KBR with a 3.19 GB seed), and a 90 s ceiling would report every honest
+# restart as failed.
+APP_RESTART=$(env_get DB_WATCHDOG_APP_RESTART)
+case "$APP_RESTART" in true|1|yes) APP_RESTART=true ;; *) APP_RESTART=false ;; esac
+APP_RESTART_RUNS=$(env_get DB_WATCHDOG_APP_RESTART_RUNS);          APP_RESTART_RUNS=$(_num "$APP_RESTART_RUNS" 2)
+APP_RESTART_COOLDOWN=$(env_get DB_WATCHDOG_APP_RESTART_COOLDOWN_SEC); APP_RESTART_COOLDOWN=$(_num "$APP_RESTART_COOLDOWN" 1800)
+APP_HEALTH_WAIT=$(env_get DB_WATCHDOG_APP_HEALTH_WAIT_SEC);        APP_HEALTH_WAIT=$(_num "$APP_HEALTH_WAIT" 600)
+APP_STREAK="$WD/.app_down_streak"; APP_RESTART_AT="$WD/.app_restart_at"; APP_FAILS="$WD/.app_fails"
 EVENTS_LEVEL=$(env_get DB_WATCHDOG_EVENTS_LEVEL)       # critical (default) | all — a typo never
 case "$(printf '%s' "${EVENTS_LEVEL:-critical}" | tr 'A-Z' 'a-z')" in   # silently widens the record
   all) EVENTS_LEVEL=all ;;
@@ -315,7 +338,20 @@ fi
 #                              = disk  check the sync copy exactly as a disk box does
 #                              = live  quick_check the LIVE RAM DB through the backend container
 #                              = both  disk integrity_check AND live quick_check
-# In every ramdisk mode AUTO-RECOVERY is REFUSED for that run, and the reason is logged.
+# AUTO-RECOVERY on a ramdisk box is REFUSED unless the operator opts into the restart-only form with
+# `DB_WATCHDOG_RAMDISK_RESTART=true`; either way the reason is logged.
+# ⚠ RESTART-ONLY recovery on a ramdisk box is opt-in: `DB_WATCHDOG_RAMDISK_RESTART=true`.
+# The watchdog's recovery sequence is already restart-only — it stops the writers, starts the backend
+# (whose own boot-time validation re-seeds/heals the RAM copy from the disk file), then starts the
+# poller. It never writes a data file itself. What the old blanket refusal bought is the guarantee that
+# a ramdisk box is never *reverted* silently: re-seeding the RAM copy replays the disk file, which is up
+# to RAMDISK_SYNC_INTERVAL_SECONDS behind, so accepting this form of recovery accepts up to that much
+# data loss on a damaged RAM DB. That is an operator decision, so the default stays `false` and refusal
+# keeps today's behaviour. What this knob buys: the app comes back on its own instead of waiting for a
+# human — which is exactly what a cron-run safety net is for (a root-run repair is impossible from cron
+# on KBR: `sudo` there requires a password).
+RAMDISK_RESTART=$(env_get DB_WATCHDOG_RAMDISK_RESTART)
+case "$RAMDISK_RESTART" in true|1|yes) RAMDISK_RESTART=true ;; *) RAMDISK_RESTART=false ;; esac
 RAMDISK_ON=$(env_get RAMDISK_ENABLED)
 case "$RAMDISK_ON" in true|1|yes) RAMDISK_ON=1 ;; *) RAMDISK_ON=0 ;; esac
 RAM_MODE=$(env_get DB_WATCHDOG_RAMDISK_MODE)
@@ -327,10 +363,12 @@ if [ "$RAMDISK_ON" = 1 ]; then
       ACTION="skip_ramdisk"
       say "skipped — RAMDISK_ENABLED=true (live DB is in RAM, not on disk)"; exit 0 ;;
     *)
-      if [ "$AUTORECOVER" = "true" ]; then
-        logl "NOTE ramdisk mode=$RAM_MODE — auto-recovery REFUSED for this run: the live DB is in RAM, so the disk copy is never promoted back over it"
+      if [ "$AUTORECOVER" = "true" ] && [ "$RAMDISK_RESTART" = true ]; then
+        logl "NOTE ramdisk mode=$RAM_MODE — recovery is RESTART-ONLY: stop poller+backend, start the backend (its own boot-time validation re-seeds/heals the RAM copy from the disk file), then verify the LIVE RAM DB through the container. It never writes or promotes a data file, and it never heals a damaged RAM DB from a damaged disk copy — that still needs 'sudo $SELF_DIR/recover_db.sh $RUN'. ⚠ Re-seeding replays the disk copy, which is up to RAMDISK_SYNC_INTERVAL_SECONDS behind"
+      elif [ "$AUTORECOVER" = "true" ]; then
+        logl "NOTE ramdisk mode=$RAM_MODE — auto-recovery REFUSED for this run: the live DB is in RAM, so the disk copy is never promoted back over it (set DB_WATCHDOG_RAMDISK_RESTART=true to allow the restart-only form)"
+        AUTORECOVER=false
       fi
-      AUTORECOVER=false
       ;;
   esac
 fi
@@ -343,6 +381,67 @@ if [ -z "$BE" ]; then
   logl "skip: stack not running (no backend container)"
   ACTION="skip_stack"
   say "stack is not running — nothing to do (will not resurrect a deliberate 'down')"; exit 0
+fi
+
+# ── app liveness: is the backend actually serving? ────────────────────────
+# The corruption signals (integrity_check, backend `malformed` lines) are silent for a wedged or
+# half-started stack: the file is fine, the app is not. This reads the same health status Docker
+# itself computes, so it costs one `docker inspect` and needs no new probe of the app.
+_be_state=$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$BE" 2>/dev/null)
+_po_state=""; [ -n "$PO" ] && _po_state=$(docker inspect -f '{{.State.Status}}' "$PO" 2>/dev/null)
+APP_DOWN=0; APP_DOWN_WHY=""
+case "$_be_state" in
+  *"unhealthy"*)   APP_DOWN=1; APP_DOWN_WHY="backend $_be_state" ;;
+  exited*)         APP_DOWN=1; APP_DOWN_WHY="backend status exited" ;;
+  dead*|created*)  APP_DOWN=1; APP_DOWN_WHY="backend status ${_be_state%%|*} (a recreate that never finished)" ;;
+  restarting*)     APP_DOWN=1; APP_DOWN_WHY="backend is crash-looping" ;;
+esac
+case "$_po_state" in
+  exited|dead|created) APP_DOWN=1; APP_DOWN_WHY="${APP_DOWN_WHY:+$APP_DOWN_WHY; }poller status $_po_state" ;;
+esac
+if [ "$APP_DOWN" = 1 ]; then
+  _as=$(( $(cat "$APP_STREAK" 2>/dev/null || echo 0) + 1 )); echo "$_as" > "$APP_STREAK" 2>/dev/null || true
+  logl "WARN app not serving: $APP_DOWN_WHY (consecutive flagged runs: $_as)"
+  if [ "$APP_RESTART" = true ] && [ "$_as" -ge "$APP_RESTART_RUNS" ] 2>/dev/null; then
+    _nowa=$(date +%s); _lasta=$(cat "$APP_RESTART_AT" 2>/dev/null || echo 0)
+    if [ $(( _nowa - _lasta )) -lt "$APP_RESTART_COOLDOWN" ]; then
+      logl "APP RESTART suppressed (cooldown, last $(date -u -d @"$_lasta" +%H:%M:%SZ))"
+      ACTION="app_down_cooldown"
+      say "app is not serving; the restart is inside its cooldown window"; exit 1
+    fi
+    echo "$_nowa" > "$APP_RESTART_AT" 2>/dev/null || true
+    logl "APP RESTART: $APP_DOWN_WHY — stop poller+backend → start backend → wait healthy (max ${APP_HEALTH_WAIT}s) → start poller"
+    dc stop poller backend >> "$LOG" 2>&1
+    dc start backend >> "$LOG" 2>&1
+    BE=$(cid backend); waited=0
+    while [ "$waited" -lt "$APP_HEALTH_WAIT" ]; do
+      h=$(docker inspect -f '{{.State.Health.Status}}' "$BE" 2>/dev/null || echo unknown)
+      [ "$h" = "healthy" ] && break
+      sleep 5; waited=$(( waited + 5 ))
+    done
+    dc start poller >> "$LOG" 2>&1
+    sleep 10
+    _fin=$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$BE" 2>/dev/null)
+    case "$_fin" in
+      running\|healthy|running\|none)
+        logl "APP RESTART ok: backend $_fin after ${waited}s"; echo 0 > "$APP_STREAK" 2>/dev/null || true
+        echo 0 > "$APP_FAILS" 2>/dev/null || true
+        ACTION="app_restarted"
+        say "app was not serving — restarted, now $_fin"
+        telegram_notify "DB watchdog: the app was not serving ($APP_DOWN_WHY) and was restarted — backend now $_fin."
+        exit 0 ;;
+    esac
+    _af=$(( $(cat "$APP_FAILS" 2>/dev/null || echo 0) + 1 )); echo "$_af" > "$APP_FAILS" 2>/dev/null || true
+    logl "APP RESTART FAILED (attempt $_af): backend still $_fin after ${waited}s"
+    ACTION="app_restart_failed"
+    say "app was not serving and the restart did not fix it — see $LOG"
+    telegram_notify "DB watchdog: the app was not serving ($APP_DOWN_WHY) and a restart did NOT fix it (backend still $_fin). Manual: cd $RUN && ./start.sh restart"
+    exit 1
+  fi
+  # No restart taken (opt-out, or the streak has not reached the threshold yet): keep going so the DB
+  # story is still checked this run — but a serving verdict must not be recorded as plain `healthy`.
+else
+  echo 0 > "$APP_STREAK" 2>/dev/null || true
 fi
 
 # ── how this run talks to SQLite ─────────────────────────────────────────────────────
@@ -373,9 +472,32 @@ RAM_IN=$(env_get RAMDISK_PATH); [ -n "$RAM_IN" ] || RAM_IN="/ramdisk/$(basename 
 LIVECHECK=""; LIVEBAD=0
 
 # ── signals ──────────────────────────────────────────────────────────────
+# Text that means "the tool could not reach a container" — it says NOTHING about the database.
+container_gone() {
+  case "$1" in
+    *"No such container"*|*"no such container"*|*"not running"*|*"Traceback"*|*"Error response from daemon"*|*"permission denied"*|*"command not found"*|*"executable file not found"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# ⚠ A watchdog run in ramdisk mode=both lasts MINUTES (live quick_check on a multi-GB RAM DB, then a
+# DB-sized snapshot): on KBR the cron tick at 07:30:01 produced a live check at 07:32:33 and a snapshot
+# at 07:37:13. `cid backend` is resolved once at the top of the run, so a deploy recreate during it
+# invalidates the id, and every later `docker exec` answers `Error response from daemon: No such
+# container: <id>`. Measured three times (2026-10-30T05:42:41Z, 2026-11-01T07:32:33Z, 08:02:17Z) — each
+# one logged as "live ramdisk DB failed quick_check", blaming the database for a docker race.
 probe_container() {   # $1 = container-side path, $2 = statement (default integrity_check)
   _pcp="${1:-$DB_IN}"; _pcq="${2:-PRAGMA integrity_check;}"
-  docker exec "$BE" python -c "import sqlite3;c=sqlite3.connect('file:$_pcp?mode=ro',uri=True);print(c.execute('$_pcq').fetchone()[0]);c.close()" 2>&1 | head -1
+  _pcrun() { docker exec "$BE" python -c "import sqlite3;c=sqlite3.connect('file:$_pcp?mode=ro',uri=True);print(c.execute('$_pcq').fetchone()[0]);c.close()" 2>&1 | head -1; }
+  _pcout=$(_pcrun)
+  if container_gone "$_pcout"; then
+    _pcnew=$(cid backend)
+    if [ -n "$_pcnew" ] && [ "$_pcnew" != "$BE" ]; then
+      logl "NOTE backend container id changed mid-run (${BE:0:12} -> ${_pcnew:0:12}) — a recreate happened while this watchdog run was working; retrying through the new container"
+      BE="$_pcnew"
+      _pcout=$(_pcrun)
+    fi
+  fi
+  printf '%s\n' "$_pcout"
 }
 backup_container() {   # online backup API run by the container's own writer, then docker cp out
   _ct="/tmp/wd-watchdog-$$.db"
@@ -400,13 +522,23 @@ elif [ "$HAVE_SQLITE3" = 1 ]; then
 else
   res=$(probe_container "$DB_IN"); _probe_maybe=1
 fi
-app_errs=$(docker logs --since "${APP_ERR_MIN}m" "$BE" 2>&1 | grep -c "disk image is malformed")
+# One `docker logs` read, two counters: `malformed` is damage, `database is locked` is contention.
+# They must never be conflated — only the first one may ever lead to a recovery.
+_BE_LOG=$(docker logs --since "${APP_ERR_MIN}m" "$BE" 2>&1)
+app_errs=$(printf '%s\n' "$_BE_LOG" | grep -c "disk image is malformed")
+app_lock_errs=$(printf '%s\n' "$_BE_LOG" | grep -c "database is locked")
 # C2 (BACKLOG #37's other half). A read-only open of a WAL database must CREATE -shm, so on a root-owned
 # data dir with the sidecars gone (a quiet DB) the direct probe can NEVER answer — and neither can .backup.
 # The container that owns the writers can open the same file, so probe there and snapshot there too.
 # ⚠ The fix is never chown/chmod on sqlite_data: a -shm the operator creates is one the root writers then
 #   cannot open. Inside the container the sidecars are created by the user that already owns the DB.
-case "$res" in *"readonly database"*|*"command not found"*|"") _probe_maybe=1 ;; *) _probe_maybe="" ;; esac
+# A lost write lock is a BENIGN probe shape too: on a busy WAL database the watchdog's own read-only
+# open can lose the lock (it must read -wal and may have to create -shm). Before this, only
+# `readonly database` / `command not found` / empty were treated as benign, so a `database is locked`
+# probe error skipped the container-side retry — the route that answers `ok` on a healthy DB — and the
+# run fell into the corruption classifier. Measured on the Lite box 2026-11-01T12:50:01Z: exactly that
+# path stopped poller+backend for 16 s on a database that was serving 200s, with app_errs=0.
+case "$res" in *"readonly database"*|*"command not found"*|*"database is locked"*|"") _probe_maybe=1 ;; *) _probe_maybe="" ;; esac
 if [ "$USE_CONTAINER" = 1 ] && [ "$res" != "ok" ] && [ -n "$_probe_maybe" ] && [ "$RAM_MODE" != live ]; then
   _direct_res="$res"
   cres=$(probe_container "$DB_IN")
@@ -421,9 +553,15 @@ if [ "$RAMDISK_ON" = 1 ] && [ "$RAM_MODE" = both ]; then
   LIVECHECK=$(probe_container "$RAM_IN" "PRAGMA quick_check;")
 fi
 if [ "$RAMDISK_ON" = 1 ] && [ "$RAM_MODE" = live ] && [ "$res" != "ok" ]; then LIVEBAD=1; fi
-if [ -n "$LIVECHECK" ] && [ "$LIVECHECK" != "ok" ]; then LIVEBAD=1; fi
-if [ "$LIVEBAD" = 1 ]; then
-  logl "WARN live ramdisk DB failed quick_check: [$(printf '%s' "$LIVECHECK" | tr -d '\n' | cut -c1-160)]"
+if [ -n "$LIVECHECK" ] && [ "$LIVECHECK" != "ok" ]; then
+  if container_gone "$LIVECHECK"; then
+    # A docker failure is not a database verdict and must not confirm corruption (the #65 rule: a
+    # missing tool is never evidence about the thing the tool was meant to measure).
+    logl "WARN live ramdisk DB check UNVERIFIED: the container route did not answer [$(printf '%s' "$LIVECHECK" | tr -d '\n' | cut -c1-160)] — this says nothing about the database and does NOT confirm corruption"
+  else
+    LIVEBAD=1
+    logl "WARN live ramdisk DB failed quick_check: [$(printf '%s' "$LIVECHECK" | tr -d '\n' | cut -c1-160)]"
+  fi
 fi
 # C4 tunables + probe-failure streak state (fired in the not_confirmed branch below).
 # PROBE_FAIL_ALERT = how long a silent streak is tolerated before it is said out loud (0 = never alert).
@@ -431,11 +569,14 @@ fi
 # while the streak continues — a permanently failing box must not emit one message per cron run.
 PROBE_FAILS="$WD/.probe_fails"
 PROBE_ALERT_AT="$WD/.probe_alert_at"
+LOCK_ALERT_AT="$WD/.lock_alert_at"
+CONTENDED=0
 PROBE_FAIL_ALERT=$(_num "$(env_get DB_WATCHDOG_PROBE_FAIL_ALERT)" 3)
 PROBE_ALERT_REPEAT=$(_num "$(env_get DB_WATCHDOG_PROBE_ALERT_REPEAT_SEC)" 86400)
 probe_cause() {   # name the failure instead of quoting a raw error string
   case "$1" in
     *"readonly database"*) echo "read-only open cannot create -shm (typically the data dir is root-owned and the WAL sidecars are absent while the DB is idle)" ;;
+    *"database is locked"*) echo "the read-only open lost the SQLite write lock to live writers (contention, not damage)" ;;
     *"no such file"*|*"unable to open"*) echo "the database file could not be opened at all" ;;
     *) _c=$(printf '%s' "$1" | tr -d '\n' | cut -c1-160)
        if [ -n "$_c" ]; then echo "$_c"; else echo "empty error text (failure class unnamed — see the backend log)"; fi ;;
@@ -449,8 +590,33 @@ else
   echo "$probe_fails" > "$PROBE_FAILS" 2>/dev/null || true
 fi
 
+# ── app-level contention: a clean FILE with a database nobody can write to ─────────────
+# #76. Both corruption signals are silent during a lock storm: integrity_check passes (the file is
+# fine) and the backend logs no `disk image is malformed` — yet every request fails. That is the
+# "the DB is dead and the watchdog did nothing" shape, and it is a detection gap, not a malfunction.
+# Detection + alert only: `stop the writers` cannot release a lock another process holds, so a
+# recovery here would just add an outage to the outage. The row is recorded (ACTION=app_contention)
+# on an otherwise-healthy run; when a louder problem exists (not_confirmed / confirmed), that action
+# stands and the WARN line + the Telegram alert still fire.
+if [ "$LOCK_ALERT" -gt 0 ] && [ "${app_lock_errs:-0}" -ge "$LOCK_ALERT" ] 2>/dev/null; then
+  CONTENDED=1
+  _nowl=$(date +%s)
+  _lastl=$(stat -c%Y "$LOCK_ALERT_AT" 2>/dev/null || echo 0)
+  if [ $(( _nowl - _lastl )) -ge "$LOCK_ALERT_REPEAT" ]; then
+    logl "WARN app-level DB contention: locked=$app_lock_errs backend 'database is locked' errors in the last ${APP_ERR_MIN} min — the file reads clean (probe=[$(printf '%s' "${res:-}" | tr -d '\n' | cut -c1-100)]), so this is contention, not damage; NO recovery is attempted"
+    telegram_notify "DB watchdog: $app_lock_errs 'database is locked' backend errors in the last ${APP_ERR_MIN} min. The database file itself reads clean, so NO recovery was attempted — this is SQLite write contention, not corruption."
+    touch "$LOCK_ALERT_AT" 2>/dev/null || true
+  fi
+fi
+
 # ── healthy fast-path: file reads ok AND backend not erroring → snapshot ──
-if [ "$res" = "ok" ] && [ "$app_errs" -eq 0 ]; then
+# ⚠ `LIVEBAD` must gate this exit or `DB_WATCHDOG_RAMDISK_MODE=both` is decorative: the mode exists to
+# catch a damaged LIVE RAM database while the lagging disk copy reads clean, but the confirmed block
+# below only runs when this exits false. Measured on KBR: three live-check failures all logged a WARN
+# and the run then continued to `OK integrity=ok app_errs=0 snapshot=…` — a healthy verdict with a
+# flagged live DB. (On a ramdisk box auto-recovery is already forced off, so confirming there means
+# forensics + an alert, never a restart.)
+if [ "$res" = "ok" ] && [ "$app_errs" -eq 0 ] && [ "$LIVEBAD" != 1 ]; then
   # C1 (BACKLOG #37 + #38, 2026-10-11). Two changes, one mechanism:
   # (1) The retry cadence is keyed on the time of the last ATTEMPT
   #     ($WD/.last_snap_attempt), NOT on the newest snapshot FILE. The file-based gate had a
@@ -474,19 +640,33 @@ if [ "$res" = "ok" ] && [ "$app_errs" -eq 0 ]; then
   if [ "$SNAP_OK" = 1 ] && { [ "$_lasttry" = "0" ] || [ $(( $(date +%s) - _lasttry )) -ge 3300 ]; }; then
     dst="$SNAP/centrallog.$(date -u +%Y%m%dT%H%M%SZ).db"
     touch "$WD/.last_snap_attempt" 2>/dev/null || true   # the gate moves BEFORE the attempt runs
-    if sqlite3 "file:$DB?mode=ro" ".backup '$dst'" 2>>"$LOG"; then
+    # The direct attempt's own stderr was written to the log unlabelled (measured on the Lite box
+    # 2026-11-01T16:58Z: a bare `Error: database is locked` line between two labelled ones), and the
+    # container-route sentence then claimed the cause was `-shm` when it was a lost write lock. Capture
+    # it and name it, so a reader knows which route failed and why.
+    _derr=$(mktemp)
+    _derr_text() {   # first line of the captured stderr, capped, or an explicit "no error text"
+      local _t; _t=$(head -1 "$1" 2>/dev/null)
+      if [ -n "$_t" ]; then printf '%s' "$_t" | cut -c1-120; else printf 'no error text'; fi
+    }
+    if sqlite3 "file:$DB?mode=ro" ".backup '$dst'" 2>"$_derr"; then
       _snap_from=direct
+      if [ -s "$_derr" ]; then
+        logl "NOTE direct snapshot attempt succeeded but printed: $(_derr_text "$_derr")"
+      fi
     elif [ "$PROBE_VIA_CONTAINER" = true ] && backup_container "$dst"; then
       # C2: the container's own writer can open the file — copy its online backup out.
       _snap_from=container
-      logl "OK snapshot taken INSIDE the backend container (the direct read-only open cannot create -shm here)"
+      logl "OK snapshot taken INSIDE the backend container (the direct read-only attempt failed: $(_derr_text "$_derr"))"
     else
       SNAPSTAT="backup_failed"
       # The empty dst is deleted here — that was #37's fingerprint. NO snapshot file survives a
       # failed attempt on any branch (third instance of the absence rule in this file).
-      logl "WARN .backup command failed — no partial snapshot left behind"; rm -f "$dst" "$dst-wal" "$dst-shm"
+      logl "WARN .backup command failed ($(_derr_text "$_derr")) — no partial snapshot left behind"
+      rm -f "$dst" "$dst-wal" "$dst-shm"
       _snap_from=""
     fi
+    rm -f "$_derr"
     if [ -n "$_snap_from" ]; then
       sqlite3 "$dst" "PRAGMA journal_mode=DELETE;" >/dev/null 2>>"$LOG"; rm -f "$dst-wal" "$dst-shm"
       _snap_size=$(stat -c%s "$dst" 2>/dev/null || echo 0)
@@ -511,8 +691,16 @@ if [ "$res" = "ok" ] && [ "$app_errs" -eq 0 ]; then
   else
     if [ "$SNAP_OK" = 0 ]; then SNAPSTAT="not_attempted"; else SNAPSTAT="skipped_gate"; fi
   fi
-  ACTION="healthy"
-  say "healthy — integrity ok, app_errs=0"
+  if [ "$APP_DOWN" = 1 ]; then
+    ACTION="app_down"
+    say "the database file reads clean but the app is NOT serving ($APP_DOWN_WHY) — DB_WATCHDOG_APP_RESTART=true makes this watchdog restart it"
+  elif [ "$CONTENDED" = 1 ]; then
+    ACTION="app_contention"
+    say "file reads clean, but $app_lock_errs backend 'database is locked' errors in ${APP_ERR_MIN} min — contention, not damage; no recovery attempted"
+  else
+    ACTION="healthy"
+    say "healthy — integrity ok, app_errs=0"
+  fi
   exit 0
 fi
 
@@ -521,25 +709,67 @@ fi
 # is the same (autoheal promotes the newest valid backup) but the forensics must
 # say so.
 if [ "$res" = "ok" ]; then
-  file_status="ok"
+  # In mode=both the sync copy can read perfectly clean while the LIVE RAM database that answers every
+  # request is damaged. Say which one failed, so the record names the evidence.
+  if [ "$LIVEBAD" = 1 ]; then
+    file_status="live-check-failed: $(printf '%s' "${LIVECHECK:-}" | tr -d '\n' | cut -c1-100)"
+  else
+    file_status="ok"
+  fi
 elif [ ! -f "$DB" ]; then
   file_status="missing"
 else
+  # ⚠ `cp` of the main file is NOT a copy of the database. In WAL mode every recent commit lives in
+  # centrallog.db-wal, so a main-file-only copy is a snapshot of some EARLIER checkpoint — and if the
+  # copy lands while a checkpoint is rewriting the main file, that one file can be structurally
+  # inconsistent. `PRAGMA integrity_check` then reports it as e.g. `wrong # of entries in index
+  # ix_device_health_device_time` on a database that is serving requests normally. Measured on this
+  # fleet 2026-11-01T12:50:01Z (Lite): that verdict stopped poller+backend for 16 s while the backend
+  # was logging 200s on /topology and app_errs=0. Reproduced in the negative: 40 main-file-only copies
+  # taken from live WAL databases (un-checkpointed WAL up to 7 MB) ALL read `ok` — the copy is blind to
+  # whatever the app is currently doing, and only occasionally catches the mid-checkpoint state that
+  # fabricates a fault. So the copy is no longer the verdict: the container-side read of the SAME file
+  # the app uses (WAL included) decides, and a copy that disagrees is reported, not acted on. Where no
+  # container route exists the copy is still the only evidence available and is labelled as such.
+  _copy_status=""
   if [ "$HAVE_SQLITE3" = 1 ]; then
     cp "$DB" "/tmp/wd_verify_$PROJ.db" 2>/dev/null
-    file_status=$(sqlite3 "/tmp/wd_verify_$PROJ.db" "PRAGMA integrity_check;" 2>&1 | head -1)
+    _copy_status=$(sqlite3 "/tmp/wd_verify_$PROJ.db" "PRAGMA integrity_check;" 2>&1 | head -1)
     rm -f "/tmp/wd_verify_$PROJ.db"*
-  else
-    # No host CLI: the container-side read IS the verification — it is the user that owns the file and it
-    # can create the -shm the operator cannot. The /tmp copy is a host-CLI convenience, not a safety rule.
+  fi
+  if [ "$USE_CONTAINER" = 1 ]; then
     file_status=$(probe_container "$DB_IN")
-    logl "NOTE /tmp-copy verification unavailable (no host sqlite3) — file_status is the container-side read"
+    if container_gone "$file_status"; then
+      # The container read itself failed — that is evidence about the TOOL, not about the database.
+      _cerr=$(printf '%s' "$file_status" | tr -d '\n' | cut -c1-100)
+      if [ -n "$_copy_status" ]; then
+        file_status="$_copy_status"
+        logl "WARN container-side read unavailable [$_cerr] — falling back to the main-file-only copy, which sees no WAL content"
+      else
+        file_status="unverified"
+        logl "ERROR no verification route answered (container read failed: [$_cerr]; no host sqlite3) — corruption is neither confirmed nor ruled out; NO recovery attempted"
+      fi
+    elif [ "$file_status" = "ok" ] && [ -n "$_copy_status" ] && [ "$_copy_status" != "ok" ]; then
+      logl "WARN main-file-only copy disagrees [$(printf '%s' "$_copy_status" | tr -d '\n' | cut -c1-120)] — the container-side read of the live DB (WAL included) says ok, and a copy of ONE FILE of a WAL database is not a corruption verdict: this run does NOT confirm corruption"
+    fi
+  else
+    file_status="$_copy_status"
+    if [ -z "$file_status" ]; then
+      file_status="unverified"
+      logl "ERROR no host sqlite3 and DB_WATCHDOG_PROBE_VIA_CONTAINER is off — nothing verified the file; corruption is neither confirmed nor ruled out"
+    else
+      logl "NOTE container route not enabled — file_status is the main-file-only copy, which cannot see un-checkpointed WAL content"
+    fi
   fi
 fi
 
 confirmed=0
 [ "$app_errs" -ge "$APP_ERR_THRESHOLD" ] && confirmed=1
-case "$file_status" in ok) ;; *) confirmed=1 ;; esac
+case "$file_status" in
+  ok) ;;
+  unverified) ;;   # nothing answered the question — confirming on silence is the #65 missing-tool trap
+  *) confirmed=1 ;;
+esac
 [ "$LIVEBAD" = 1 ] && confirmed=1     # a damaged LIVE ramdisk DB is corruption whatever the copy says
 
 if [ "$confirmed" -eq 0 ]; then
@@ -633,8 +863,40 @@ SINCE=$(docker inspect -f '{{.State.StartedAt}}' "$BE" 2>/dev/null)
 [ -z "$SINCE" ] && SINCE=45s
 after=$(docker logs --since "$SINCE" "$BE" 2>&1 | grep -c "disk image is malformed")
 res2=$(sqlite3 "file:$DB?mode=ro" "PRAGMA integrity_check;" 2>&1 | head -1)
-if [ "$after" -eq 0 ] && { [ "$res2" = "ok" ] || docker logs --since "$SINCE" "$BE" 2>&1 | grep -q " 200 OK"; }; then
-  logl "RECOVER ok: malformed(since-start)=0 probe=[$res2]"; echo 0 > "$FAILS"
+# The same ownership wall as #37: on a root-owned data dir with no sidecars present, the host
+# read-only open can NEVER answer — so without this the recovery could only ever be judged by the
+# backend's `malformed` count, and the log printed probe=[…readonly database (8)] next to "RECOVER ok".
+case "$res2" in
+  *"readonly database"*|*"database is locked"*|"")
+    if [ "$USE_CONTAINER" = 1 ]; then
+      _c2=$(probe_container "$DB_IN")
+      if [ "$_c2" = "ok" ]; then
+        logl "OK RECOVER verification via container: direct open failed [$(printf '%s' "$res2" | tr -d '\n' | cut -c1-100)] — the container-side read of the live DB answers ok"
+        res2="ok"
+      fi
+    fi
+    ;;
+esac
+# On a ramdisk box the file the app actually uses is the RAM copy, so the recovery is only
+# "recovered" if THAT reads clean. Quick-checked through the container (the host cannot read the
+# container-owned /dev/shm subdir). This is what makes the restart-only form honest: if the RAM DB is
+# still damaged after the boot-time re-seed, say so and send the operator to the root-run repair
+# instead of logging success.
+live2=""
+if [ "$RAMDISK_ON" = 1 ] && { [ "$RAM_MODE" = live ] || [ "$RAM_MODE" = both ]; }; then
+  live2=$(probe_container "$RAM_IN" "PRAGMA quick_check;")
+  logl "RECOVER verify: live RAM DB quick_check=[$(printf '%s' "$live2" | tr -d '\n' | cut -c1-100)] (through the backend container)"
+fi
+
+_ok=0
+if [ "$after" -eq 0 ] && { [ "$res2" = "ok" ] || docker logs --since "$SINCE" "$BE" 2>&1 | grep -q " 200 OK"; }; then _ok=1; fi
+if [ -n "$live2" ] && [ "$live2" = "ok" ] && [ "$res2" != "ok" ]; then _ok=1; fi
+if [ -n "$live2" ] && [ "$live2" != "ok" ]; then
+  _ok=0
+  logl "WARN recovery NOT confirmed: the LIVE RAM database still fails quick_check [$live2] — a restart cannot heal it, and the disk copy is what a re-seed would replay. Run 'sudo $SELF_DIR/recover_db.sh $RUN' (cron cannot do it: sudo needs a password on this host)"
+fi
+if [ "$_ok" = "1" ]; then
+  logl "RECOVER ok: malformed(since-start)=0 probe=[$res2]$( [ -n "$live2" ] && printf ' live-quick_check=[%s]' "$(printf '%s' "$live2" | tr -d '\n' | cut -c1-100)")"; echo 0 > "$FAILS"
   ACTION="recovered"
   say "recovered OK — DB healthy again"
   telegram_notify "Auto-recovery SUCCEEDED — DB is healthy again (probe=[$res2])."
