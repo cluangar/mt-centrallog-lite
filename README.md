@@ -106,6 +106,8 @@ cd ~/mt-centrallog-lite
 docker compose down && docker compose up -d    # recreate the macvlan_lan network
 ```
 
+⚠ **After the address changes, three more things follow it.** Set `TLS_SAN=IP:<new-ip>,DNS:localhost` in `.env` and recreate **nginx alone** (`docker compose up -d --no-build --force-recreate --no-deps nginx`) so the served certificate names the address you type — devices that already trust the site CA need nothing else. Check `BACKEND_FETCH_URL` too: it is the address a **router** uses to fetch from you, and a stale value sends device traffic to a host that no longer exists. And because the ipvlan is bound to your wireless interface, a `down && up` is what rebuilds it — a plain `restart` reuses the stale network.
+
 ## Uninstall
 
 ```bash
@@ -123,7 +125,7 @@ Five containers pulled from GHCR:
 | `ghcr.io/cluangar/mt-centrallog-lite-backend` | FastAPI + SQLAlchemy async, REST API, threat engine, auto block/unblock |
 | `ghcr.io/cluangar/mt-centrallog-lite-poller` | librouteros polling loop, MNDP scanner, DHCP/DNS/lease scraper |
 | `ghcr.io/cluangar/mt-centrallog-lite-frontend` | React SPA (Vite build) |
-| `ghcr.io/cluangar/mt-centrallog-lite-nginx` | Reverse proxy, self-signed cert on first boot |
+| `ghcr.io/cluangar/mt-centrallog-lite-nginx` | Reverse proxy + the SPA cache rules. On first boot it creates a **persistent site CA** (`ssl_certs/ca.crt`, valid `TLS_CA_DAYS`, published at `http://<your-ip>/ca.crt` for devices to enrol) and signs a leaf from it — `CA:FALSE`, `serverAuth`, `subjectAltName` taken from **`TLS_SAN`**, valid `TLS_LEAF_DAYS` (800 d, inside Apple's 825-day cap). Re-issuing that leaf never re-breaks a device that already trusts the CA; changing `TLS_SAN` needs `docker compose up -d --no-build --force-recreate --no-deps nginx` |
 | `ghcr.io/cluangar/mt-centrallog-lite-mndp-relay` | UDP host-relay so containers see MNDP broadcasts |
 
 Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows the backend's Docker access to `/containers/*` + `/images/*` — needed for the Service Status page and post-restore auto-restart).
@@ -192,6 +194,18 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - AbuseIPDB / Tor / proxy reputation **lookups** — Lite's risk scorer reads the reputation table (`risk_scorer.py:91`) and scores it if rows exist, but Lite ships no reputation service to fill it
 - Ramdisk database mode
 
+**Newer than the published build — in the source tree, arriving at the next publish.** The release you install today is `1.5.615` (see **Current release** above). Each item below is already in Lite's own changelog and lands when the images are pushed:
+
+- `1.5.616` — VLANs read from the **switch chip** on the boards that configure them there (CRS109 / CRS112 / CRS125, hEX PoE, hAP ac, hAP ac lite, wsAP ac lite), with new tables and migration `074`; the bridge table is consulted only when the chip says nothing
+- `1.5.617` — a RouterOS **log** reply is validated as log rows before the poller acts on it, so a half-read reply can no longer be mistaken for "the device cleared its log" and delete the stored history
+- `1.5.618` — a wireless client is attributed by the peer's own RouterOS identity; the IP-based fallback is refused when the row names a peer that is not in the inventory, or when the address lands on a managed device that owns no radio (this is what removed two phantom mesh uplinks)
+- `1.5.620`–`1.5.622` — the **negotiated link rate** on the Network Map's hover transfer card: wired ports from `/interface/ethernet monitor` (migration `075`), wireless links from the AP's own registration table, both RouterOS spellings (`78Mbps-20MHz/2S` and bare `866700000`), and both directions of a pair kept rather than averaged
+- `1.5.623` — collected log entries keep **the date their router printed**: RouterOS emits `oct/06 18:31:34` with no year, and that shape used to be read as a bare clock and stamped with the day we collected it
+- `1.5.627`–`1.5.628` — a spanning-tree claim may correct the **ports** of a link the map already has (`TOPOLOGY_STP_PORT_MOVE`), and the read-only `GET /api/v1/devices/{id}/port-pairing` verifier states which port each peer hangs on, graded `confirmed` / `probable` / `contradicts` from stored evidence only
+- `1.5.629` — the port-pairing check stopped naming up to three switches for one spanning-tree claim: it decided which device owns a MAC from only the two devices being compared, and these boards number their ports with consecutive MACs off one base, so a prefix several switches share looked unique. Ownership is now read from every device at once — an exact MAC owned by one device first, the shared prefix only when exactly one device reports it.
+- `1.5.630` — the background job that stores a copy of the map every 15 minutes had been failing on this edition since 2026-11-14 because it named a parameter only the Full build defines: Network History and the link-count timeline had no stored graph to replay, and no screen said so. The capture now reaches the map through one entry point that BOTH editions define, each passing its own arguments.
+- The evidence that pairing work reads is already collected on Lite: `device_neighbors` with `remote_port_id` (migration `029`), `bridge_stp_ports` with per-port numbers (`052`), `interface_stats`, `log_entries`, and `port_link_speed` (`075`). A Lite install applies any pending migration itself at startup (disk mode) — no manual step.
+
 Lite and Full share the same DB schema and the same `.env` format — Lite → Full upgrade is a Docker image swap.
 
 ## Database protection (host watchdog)
@@ -231,6 +245,10 @@ Everything lives in `.env` and `docker compose up -d` re-reads it. A few are wor
 | `WIRELESS_STATS_SAMPLE_INTERVAL_MINUTES` | `15` | cadence of the per-AP client-count history behind the device chart |
 | `TOPOLOGY_POLL_INTERVAL_SECONDS` | `900` | how often the poller re-reads neighbours / FDB / spanning-tree — the evidence the map is built from |
 | `WIRELESS_REG_EDGES` / `WIRELESS_FLOOD_DEMOTE` | `true` / `true` | turn the controller-less wireless links (and their flood demotion) off when a map link looks wrong |
+| `TOPOLOGY_BRIDGE_VLAN_PORTS` | `true` | let the bridge VLAN membership table localise which port a link was heard on; `false` restores the name/parent-only resolution |
+| `TOPOLOGY_STP_PORT_MOVE` | `true` | let a spanning-tree claim correct the **ports** of a link the map already holds (a root port names the exact port of the switch it is cabled to). `false` restores the old behaviour: such a claim may create a link, never relabel one. In the source tree from `1.5.627`; the published `1.5.615` build ignores this key |
+| `PORT_PAIRING_LOOKBACK_HOURS` | `24` | how far back `GET /api/v1/devices/{id}/port-pairing` reads link-flap and byte-counter evidence (the endpoint's own `hours=` overrides it, max 168). In the source tree from `1.5.627`; the published `1.5.615` build has no port-pairing endpoint |
+| `POLLER_ERROR_BACKOFF_MAX_SECONDS` | `900` | the ceiling of the per-device error back-off ladder — how long a device that keeps failing is left alone before it is tried again |
 | `TOPOLOGY_SNAPSHOT_INTERVAL_S` / `TOPOLOGY_SNAPSHOT_RETENTION_DAYS` | `900` / `3` (code defaults `15` / `90`) | link-count timeline capture tick + retention |
 | `TELEGRAM_*` | see `.env` | which alert types are sent, digest interval, quiet hours, inline buttons |
 | `DB_WATCHDOG_ENABLED` / `DB_WATCHDOG_AUTORECOVER` / `DB_WATCHDOG_RAMDISK_MODE` | `false` / `true` / `skip` | the host watchdog: opt-in on unreliable disk, and what it does on a ramdisk install (see above) |
