@@ -57,6 +57,23 @@ if $REFRESH; then
   chmod +x update-mndp.sh
 fi
 
+# ── Measure the LAN and re-point any key that disagrees, BEFORE recreating ─
+# The move case: the box is on a network .env no longer describes. --apply repairs
+# BACKEND_FETCH_URL / TLS_SAN / the MNDP block, copies .env to /tmp first, leaves a value
+# that already matches byte-identical, and writes nothing when no LAN can be detected.
+# TLS_SAN_AUTO / BACKEND_FETCH_URL_AUTO decide whether the runtime also re-derives them
+# with no edit at all (both default true).
+if $REFRESH || [ ! -f host_facts.sh ]; then
+  curl -fsSL "${BASE_URL}/host_facts.sh" -o host_facts.sh.new \
+    && mv host_facts.sh.new host_facts.sh || warn "could not fetch host_facts.sh"
+fi
+chmod +x host_facts.sh 2>/dev/null || true
+if [ -f host_facts.sh ]; then
+  say "Measuring this host's LAN and re-pointing stale keys…"
+  bash host_facts.sh "$(pwd)" --apply \
+    || warn "host_facts.sh failed — continuing with the settings .env already has"
+fi
+
 # ── Pull + recreate ──────────────────────────────────────────────────────
 say "Pulling images…"
 docker compose pull

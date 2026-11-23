@@ -142,7 +142,8 @@ fetch update-mndp.sh
 fetch db_watchdog.sh
 fetch recover_db.sh
 fetch watchdog-cron.sh
-chmod +x update.sh update-mndp.sh db_watchdog.sh recover_db.sh watchdog-cron.sh
+fetch host_facts.sh
+chmod +x update.sh update-mndp.sh db_watchdog.sh recover_db.sh watchdog-cron.sh host_facts.sh
 
 # Data dirs
 mkdir -p sqlite_data backup_data capture_data
@@ -203,6 +204,15 @@ ok ".env written to $INSTALL_DIR/.env"
 # ── Pull + start ──────────────────────────────────────────────────────────
 say "Pulling images (this may take a few minutes on first run)…"
 docker compose pull
+
+# The compose file bind-mounts ./host_facts into three containers, so the directory must
+# exist WITH its file before the containers are created — otherwise Docker makes an empty
+# root-owned directory named host_facts and the auto path is silently inert.
+# --facts-only here: install.sh has just written MNDP_*, TLS_SAN and BACKEND_FETCH_URL from
+# its own detection, so nothing is re-edited; this only records the host's addresses.
+say "Measuring this host's LAN address…"
+bash host_facts.sh "$INSTALL_DIR" --facts-only \
+  || warn "host_facts.sh failed — the stack still starts; the containers fall back to the settings in .env"
 
 say "Starting Lite stack…"
 docker compose up -d
