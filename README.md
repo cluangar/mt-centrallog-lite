@@ -2,9 +2,9 @@
 
 Self-hosted MikroTik central logging with rule-based threat detection, auto block/unblock, an MNDP network map with switch-port locate and MAC→IP/VLAN host lookup, one-click device WebFig console, device backup/restore (binary and reset-first `.rsc`), per-AP wireless client monitoring, and Telegram + email alerting. Docker Compose, SQLite, single-node.
 
-**Current release: `1.5.671`** — pushed 2026-11-24. Pin it with `./update.sh 1.5.671`. No new migration in this range (`079_loop_protect_ui_settings` arrived with `1.5.650`), so nothing here changes your tables. Two images moved — backend and frontend — so upgrading from `1.5.669` or `1.5.667` needs **no `--refresh`**; from `1.5.665` or older add `--refresh` once (see the ⚠ note below). **What each version changed is one row in the table at the bottom of this page.**
+**Current release: `1.5.671`** — pushed 2026-11-24. Pin it with `./update.sh 1.5.671`. No new migration in this range (`079_loop_protect_ui_settings` arrived with `1.5.650`), so nothing here changes your tables. Two images moved — backend and frontend — so upgrading from **`1.5.666` or later** needs **no `--refresh`**; from `1.5.665` or older add `--refresh` once (see the ⚠ note below). **What each version changed is one row in the table at the bottom of this page.**
 
-The `1.5.630`, `1.5.631`, `1.5.632`, `1.5.634`, `1.5.650` and `1.5.670` work is still in this build; each is one row in the table below.
+Everything published earlier is still in this build; each release is one row in that table, and each row builds on the ones above it.
 
 GHCR `:latest` == `1.5.671` on all five packages — `backend 95d6d932…` · `poller 451be40e…` · `frontend 3c3274ce…` · `nginx 09c6191b…` · `mndp-relay a3f7acf1…` (read off the registry anonymously 2026-11-24; **57 tags** per package). Only **backend** and **frontend** were rebuilt for this release; `poller`, `nginx` and `mndp-relay` carry the identical digests they had at `1.5.669` — no file in those three trees moved since, and each image's own baked files were read back and compared with the source (`/app/app/poller.py a6e8cab2…`, `/etc/nginx/conf.d/default.conf 45ff8445…` and `/entrypoint.sh 4bb50f9e…` on `nginx:1.31.9-alpine`, `/app/app.py d7d242bf…`), so each of those three is a retag, content unchanged.
 
@@ -98,7 +98,7 @@ When it finishes: browse to `http://<your-server-ip>/` — default login **admin
 ```bash
 cd ~/mt-centrallog-lite
 ./update.sh              # pull :latest and recreate
-./update.sh 1.5.669      # pin to a specific version (writes IMAGE_TAG to .env)
+./update.sh 1.5.671      # pin to a specific version (writes IMAGE_TAG to .env)
 ./update.sh --refresh    # also re-download the compose file, host_facts.sh, update-mndp.sh, and the three watchdog scripts
 
 Your `sqlite_data/`, `backup_data/`, `capture_data/`, and `.env` are never touched by an update — only images swap.
@@ -204,7 +204,7 @@ Plus one sidecar not built by us: `tecnativa/docker-socket-proxy:0.3` (narrows t
 - AbuseIPDB / Tor / proxy reputation **lookups** — Lite's risk scorer reads the reputation table (`risk_scorer.py:91`) and scores it if rows exist, but Lite ships no reputation service to fill it
 - Ramdisk database mode
 
-**Nothing is waiting on this edition.** `1.5.650` (the loop-storm watch, the Loop Storm settings page, port chips that state what their link is, bonded-port link speed, and the reviewed Thai labels) sits on top of `1.5.634` (uplink ports labelling themselves in the router, opt-in), `1.5.632` (MNDP discovery that accepts what it hears) and `1.5.631` (the pinned, patched nginx base), all still in force.
+**Nothing is waiting on this edition.** Every release in the table at the bottom of this page is cumulative — the version you pin already contains all of them.
 
 Lite and Full share the same DB schema and the same `.env` format — Lite → Full upgrade is a Docker image swap.
 
