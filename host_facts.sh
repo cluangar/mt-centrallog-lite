@@ -20,7 +20,8 @@
 #      against it instead of trusting the file blindly.
 #   2. .env repair — ONLY with --apply (the Lite scripts). A key is rewritten
 #      only when it disagrees with the measured LAN; a value that already matches
-#      stays byte-identical, and the file is copied to /tmp first.
+#      stays byte-identical, and the previous file is copied BESIDE it at mode 600
+#      first (never to /tmp — that copy holds every secret the .env does).
 #      --facts-only (the Full scripts) writes (1) and touches nothing else: the
 #      production box is not portable and its .env is not a script's to edit.
 #
@@ -166,9 +167,22 @@ back_up_first() {
   # after the repair would only prove the repair is idempotent.
   [ "$BAK_TAKEN" = 1 ] && return
   BAK_TAKEN=1
+  # The before-image is a whole copy of the run dir's .env — device passwords, API
+  # keys, the Telegram token — so it belongs BESIDE that file at mode 600. The old
+  # path wrote it to /tmp at mode 644, which is a world-readable credential file on
+  # every move (BACKLOG #155, measured 2026-11-25: 17,569 B, byte-identical to .env).
+  BAK="$(dirname "$ENV_FILE")/.env.bak-$(date +%Y%m%d%H%M%S)-hostfacts"
+  if cp -p "$ENV_FILE" "$BAK" 2>/dev/null && chmod 600 "$BAK" 2>/dev/null; then
+    note "previous .env kept at $BAK (mode 600, beside the run dir)"
+    return
+  fi
+  # Run dir not writable — fall back, but never world-readable, and say what to do.
   BAK="/tmp/.env.bak-$(date +%Y%m%d%H%M%S)-hostfacts"
-  cp -p "$ENV_FILE" "$BAK" && echo "host_facts: previous .env kept at $BAK" \
-    || note "could not back up $ENV_FILE — continuing, but there is no before-image"
+  if cp -p "$ENV_FILE" "$BAK" 2>/dev/null && chmod 600 "$BAK" 2>/dev/null; then
+    note "previous .env kept at $BAK (mode 600) — the run dir was not writable; shred it once the move is verified"
+  else
+    note "could not back up $ENV_FILE — continuing, but there is no before-image"
+  fi
 }
 
 set_env() {
