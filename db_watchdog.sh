@@ -291,6 +291,17 @@ SNAP_MIN_BYTES=$(env_get DB_WATCHDOG_SNAPSHOT_MIN_BYTES); SNAP_MIN_BYTES=$(_num 
 # 1: a watchdog with no snapshot is not a safety net.
 SNAP_KEEP=$(env_get DB_WATCHDOG_SNAP_KEEP); SNAP_KEEP=$(_num "$SNAP_KEEP" 24)
 if [ "$SNAP_KEEP" -lt 1 ] 2>/dev/null; then SNAP_KEEP=1; fi
+# ⚠ A snapshot is a DB-SIZED copy: on a 2.9 GB box the 3300 s gate writes ~2.9 GB to the datastore
+# EVERY HOUR even when SNAP_KEEP=1 keeps only one file, because the copy is rewritten each time. On a
+# box whose real safety copies live elsewhere (an external backup system covering the VM), that hourly
+# write is pure load on the same storage the app runs on. `DB_WATCHDOG_SNAPSHOTS=false` turns the COPY
+# off and keeps everything else this script does: the read-only probe, the live-RAM check, app-liveness
+# detection, the contention alarm, the event record, alerts and the escalation breaker. Default TRUE =
+# today's behaviour; only an explicit false/0/no disables it. The record then carries
+# `snapshots_disabled`, which is deliberately NOT one of the failure values the alert gate at
+# `is_snap_failure` names (backup_failed / own_check_failed / too_small), so disabling snapshots can
+# never raise a corruption alarm and can never feed #37's suppression window.
+SNAPSHOTS=$(env_get DB_WATCHDOG_SNAPSHOTS); case "$SNAPSHOTS" in false|0|no) SNAPSHOTS=false ;; *) SNAPSHOTS=true ;; esac
 # ── app liveness: the case where every FILE check says healthy and the app is dead ──
 # Docker already probes the backend's own /api/v1/health every 10 s and marks the container `unhealthy`
 # when it stops answering; a `compose down` followed by an interrupted `up` can also leave a service in
@@ -636,6 +647,12 @@ if [ "$res" = "ok" ] && [ "$app_errs" -eq 0 ] && [ "$LIVEBAD" != 1 ]; then
     SNAP_OK=0
     logl "NOTE snapshot SKIPPED: the acceptance checks need the host sqlite3 CLI (the container cannot see the run dir). Detection, records and alerts still run"
   fi
+  if [ "$SNAPSHOTS" = false ]; then
+    # The whole copy is skipped here — before `.last_snap_attempt` moves and before any byte is written.
+    SNAP_OK=0
+    SNAPSTAT="snapshots_disabled"
+    logl "NOTE snapshots DISABLED (DB_WATCHDOG_SNAPSHOTS=false) — no copy attempted; probe, live check, app-liveness detection, records and alerts still run"
+  fi
   _lasttry=$(stat -c%Y "$WD/.last_snap_attempt" 2>/dev/null || echo 0)
   if [ "$SNAP_OK" = 1 ] && { [ "$_lasttry" = "0" ] || [ $(( $(date +%s) - _lasttry )) -ge 3300 ]; }; then
     dst="$SNAP/centrallog.$(date -u +%Y%m%dT%H%M%SZ).db"
@@ -689,7 +706,7 @@ if [ "$res" = "ok" ] && [ "$app_errs" -eq 0 ] && [ "$LIVEBAD" != 1 ]; then
     # multi-GB box the default is a disk-space decision, not a free one.
     ls -t "$SNAP"/centrallog.*.db 2>/dev/null | tail -n +$((SNAP_KEEP + 1)) | xargs -r rm -f
   else
-    if [ "$SNAP_OK" = 0 ]; then SNAPSTAT="not_attempted"; else SNAPSTAT="skipped_gate"; fi
+    if [ "$SNAPSTAT" = "snapshots_disabled" ]; then :; elif [ "$SNAP_OK" = 0 ]; then SNAPSTAT="not_attempted"; else SNAPSTAT="skipped_gate"; fi
   fi
   if [ "$APP_DOWN" = 1 ]; then
     ACTION="app_down"
